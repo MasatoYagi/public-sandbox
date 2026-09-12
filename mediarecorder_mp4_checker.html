@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediaRecorder MP4 Test</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .video-container {
+            position: relative;
+            background-color: #1a202c;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            aspect-ratio: 16 / 9;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="p-6 md:p-8">
+            <h1 class="text-2xl font-bold mb-4 text-gray-900">MediaRecorder MP4 録画テスト</h1>
+            
+            <!-- サポート状況表示エリア -->
+            <div id="status-panel" class="mb-6 p-4 rounded-lg bg-gray-100 border border-gray-200">
+                <h2 class="font-semibold text-lg mb-2">サポート状況 (MediaRecorder.isTypeSupported)</h2>
+                <ul id="support-list" class="space-y-1 text-sm font-mono">
+                    <li class="text-gray-500">確認中...</li>
+                </ul>
+                <div id="selected-type" class="mt-4 font-bold text-blue-600"></div>
+            </div>
+
+            <!-- メッセージ表示エリア (alertの代替) -->
+            <div id="message-box" class="hidden mb-6 p-4 rounded-lg text-sm font-medium"></div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div>
+                    <h3 class="font-semibold mb-2">カメラプレビュー</h3>
+                    <div class="video-container">
+                        <video id="preview-video" autoplay muted playsinline></video>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="font-semibold mb-2">録画結果</h3>
+                    <div class="video-container">
+                        <video id="playback-video" controls playsinline></video>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap gap-3">
+                <button id="btn-start-camera" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition font-medium">
+                    1. カメラを起動
+                </button>
+                <button id="btn-start-record" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-md transition font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    2. 録画開始
+                </button>
+                <button id="btn-stop-record" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    3. 録画停止
+                </button>
+                <button id="btn-download" class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md transition font-medium disabled:opacity-50 disabled:cursor-not-allowed hidden">
+                    MP4をダウンロード
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 確認するMP4関連のMIMEタイプ候補
+        const mp4MimeTypes = [
+            'video/mp4',
+            'video/mp4;codecs="avc1.4d002a"', // H.264
+            'video/mp4;codecs="avc1.42E01E, mp4a.40.2"', // H.264 + AAC
+            'video/mp4;codecs="hvc1"', // HEVC (Safariでサポートされる場合あり)
+        ];
+
+        let mediaRecorder;
+        let recordedChunks = [];
+        let stream;
+        let targetMimeType = '';
+
+        // DOM要素の取得
+        const supportList = document.getElementById('support-list');
+        const selectedTypeDisplay = document.getElementById('selected-type');
+        const messageBox = document.getElementById('message-box');
+        const previewVideo = document.getElementById('preview-video');
+        const playbackVideo = document.getElementById('playback-video');
+        
+        const btnStartCamera = document.getElementById('btn-start-camera');
+        const btnStartRecord = document.getElementById('btn-start-record');
+        const btnStopRecord = document.getElementById('btn-stop-record');
+        const btnDownload = document.getElementById('btn-download');
+
+        function checkSupport() {
+            supportList.innerHTML = '';
+            let supported = false;
+
+            mp4MimeTypes.forEach(type => {
+                const isSupported = MediaRecorder.isTypeSupported(type);
+                const li = document.createElement('li');
+                
+                if (isSupported) {
+                    li.innerHTML = `<span class="text-green-600">✅ 対応:</span> ${type}`;
+                    if (!targetMimeType) {
+                        targetMimeType = type;
+                        supported = true;
+                    }
+                } else {
+                    li.innerHTML = `<span class="text-red-500">❌ 非対応:</span> ${type}`;
+                }
+                supportList.appendChild(li);
+            });
+
+            if (targetMimeType) {
+                selectedTypeDisplay.innerText = `録画に使用する形式: ${targetMimeType}`;
+            } else {
+                selectedTypeDisplay.innerText = `録画に使用する形式: (MP4非対応のため、ブラウザのデフォルト形式を使用します)`;
+                targetMimeType = ''; // 空にしてデフォルトにフォールバック
+            }
+        }
+
+        // メッセージ表示用ユーティリティ
+        function showMessage(msg, type = 'info') {
+            messageBox.textContent = msg;
+            messageBox.classList.remove('hidden', 'bg-red-100', 'text-red-700', 'bg-blue-100', 'text-blue-700');
+            if (type === 'error') {
+                messageBox.classList.add('bg-red-100', 'text-red-700');
+            } else {
+                messageBox.classList.add('bg-blue-100', 'text-blue-700');
+            }
+        }
+
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                previewVideo.srcObject = stream;
+                btnStartRecord.disabled = false;
+                btnStartCamera.disabled = true;
+                btnStartCamera.classList.add('opacity-50');
+                showMessage('カメラを起動しました。録画を開始できます。');
+            } catch (err) {
+                console.error("Camera error:", err);
+                showMessage(`カメラの起動に失敗しました: ${err.message}`, 'error');
+            }
+        }
+
+        function startRecording() {
+            recordedChunks = [];
+            
+            const options = targetMimeType ? { mimeType: targetMimeType } : {};
+            
+            try {
+                mediaRecorder = new MediaRecorder(stream, options);
+            } catch (e) {
+                console.error('MediaRecorder initialization failed:', e);
+                showMessage(`MediaRecorderの初期化に失敗しました: ${e.message}`, 'error');
+                return;
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                // ダウンロード・再生用のBlobを作成
+                const blobType = targetMimeType ? targetMimeType.split(';')[0] : 'video/mp4'; 
+                const blob = new Blob(recordedChunks, { type: blobType });
+                const videoURL = URL.createObjectURL(blob);
+                
+                playbackVideo.src = videoURL;
+                
+                // ダウンロードボタンの設定
+                btnDownload.onclick = () => {
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = videoURL;
+                    // MP4非対応ブラウザでフォールバックした場合は拡張子が変わる可能性があるが、
+                    // 今回はテストのため強制的に.mp4とするか、WebMなら.webmにする
+                    const ext = blobType.includes('webm') ? 'webm' : 'mp4';
+                    a.download = `recorded_video.${ext}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        // メモリ解放はすぐにやるとiOS Safariでダウンロード失敗することがあるため少し遅らせる
+                        // URL.revokeObjectURL(videoURL); 
+                    }, 100);
+                };
+                
+                btnDownload.classList.remove('hidden');
+                btnDownload.disabled = false;
+                showMessage('録画が完了しました。再生またはダウンロードが可能です。');
+            };
+
+            mediaRecorder.start();
+            
+            btnStartRecord.disabled = true;
+            btnStopRecord.disabled = false;
+            btnStartRecord.textContent = '録画中...';
+            showMessage('録画中です...');
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                btnStartRecord.disabled = false;
+                btnStopRecord.disabled = true;
+                btnStartRecord.textContent = '2. 録画開始';
+            }
+        }
+
+        btnStartCamera.addEventListener('click', startCamera);
+        btnStartRecord.addEventListener('click', startRecording);
+        btnStopRecord.addEventListener('click', stopRecording);
+
+        // ページロード時にサポート状況をチェック
+        window.onload = checkSupport;
+    </script>
+</body>
+</html>
