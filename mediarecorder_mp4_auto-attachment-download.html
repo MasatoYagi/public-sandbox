@@ -3,9 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>iPad録画テスト</title>
+  <title>iPad録画テスト（背面カメラ・自動DL）</title>
   <style>
     body { font-family: sans-serif; padding: 20px; }
+    /* 背面カメラの映像が見やすいように調整 */
     video { width: 100%; max-width: 400px; background: #000; border-radius: 8px; }
     button { padding: 10px 20px; font-size: 16px; margin: 5px; cursor: pointer; }
     #downloadLink {
@@ -19,9 +20,9 @@
 </head>
 <body>
 
-  <h2>iPad 録画＆ダウンロードテスト</h2>
+  <h2>iPad 録画テスト（背面カメラ）</h2>
 
-  <!-- カメラのプレビュー領域 (iPad向けにplaysinlineが必須) -->
+  <!-- カメラのプレビュー領域 -->
   <video id="preview" autoplay muted playsinline></video>
   <br>
 
@@ -30,8 +31,8 @@
   <button id="stopBtn" disabled>録画停止</button>
   <br><br>
 
-  <!-- ダウンロード用ボタン -->
-  <a id="downloadLink">👇 ここをタップしてiPadに保存 👇</a>
+  <!-- ダウンロード用ボタン（自動DLが弾かれた時のための手動ボタン） -->
+  <a id="downloadLink">👇 自動保存されない場合はここをタップ 👇</a>
 
   <!-- 送信用フォーム -->
   <div class="form-container">
@@ -46,7 +47,7 @@
 
   <script>
     let mediaRecorder;
-    let recordedChunks = []; // 録画データを一時保存する配列
+    let recordedChunks = []; 
 
     const preview = document.getElementById('preview');
     const startBtn = document.getElementById('startBtn');
@@ -54,60 +55,59 @@
     const downloadLink = document.getElementById('downloadLink');
     const fileInput = document.getElementById('videoFile');
 
-    // カメラとマイクの取得要求
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+    // 【変更1】背面カメラ（environment）を指定して取得
+    navigator.mediaDevices.getUserMedia({ 
+      video: { facingMode: "environment" }, 
+      audio: true 
+    })
       .then(stream => {
-        // プレビューにカメラの映像を映す
         preview.srcObject = stream;
-
-        // MediaRecorderの初期化（iPad SafariはデフォルトでMP4になります）
         mediaRecorder = new MediaRecorder(stream);
 
-        // 録画データが生成されるたびに配列に保存
         mediaRecorder.ondataavailable = function(event) {
           if (event.data && event.data.size > 0) {
             recordedChunks.push(event.data);
           }
         };
 
-        // 【重要】録画が停止した時の処理
         mediaRecorder.onstop = function() {
-          // 1. 録画データを一つのBlob（ファイルデータ）にまとめる
           const mimeType = mediaRecorder.mimeType || 'video/mp4';
           const blob = new Blob(recordedChunks, { type: mimeType });
           const fileName = `recording_${Date.now()}.mp4`;
 
-          // 2. BlobからURLを生成し、ダウンロードボタンにセットして表示
           const downloadUrl = URL.createObjectURL(blob);
           downloadLink.href = downloadUrl;
           downloadLink.download = fileName;
-          downloadLink.style.display = 'inline-block'; // ここでボタンを表示！
+          
+          // ボタンを画面に表示しておく（iPadで自動DLがブロックされた時用）
+          downloadLink.style.display = 'inline-block'; 
 
-          // 3. フォームの <input type="file"> へ自動添付
+          // フォームの <input type="file"> へ自動添付
           const file = new File([blob], fileName, { type: mimeType });
           const dataTransfer = new DataTransfer();
           dataTransfer.items.add(file);
           fileInput.files = dataTransfer.files;
 
-          alert("録画が完了しました。保存ボタンが表示されます。");
+          // 【変更2】プログラムから自動的にクリックしてダウンロードを促す
+          downloadLink.click();
         };
       })
       .catch(error => {
         alert("カメラの取得に失敗しました: " + error.message);
       });
 
-    // 「録画開始」ボタンを押した時の処理
+    // 「録画開始」ボタン
     startBtn.onclick = () => {
-      recordedChunks = []; // 前回のデータをクリア
+      recordedChunks = []; 
       mediaRecorder.start();
       startBtn.disabled = true;
       stopBtn.disabled = false;
-      downloadLink.style.display = 'none'; // 録画中はダウンロードボタンを隠す
+      downloadLink.style.display = 'none'; 
     };
 
-    // 「録画停止」ボタンを押した時の処理
+    // 「録画停止」ボタン
     stopBtn.onclick = () => {
-      mediaRecorder.stop(); // ここでonstopイベントが発火し、ボタンが表示される
+      mediaRecorder.stop(); 
       startBtn.disabled = false;
       stopBtn.disabled = true;
     };
