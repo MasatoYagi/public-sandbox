@@ -1,38 +1,117 @@
-<!-- ダウンロード用ボタン（最初は非表示にしておく） -->
-<a id="downloadLink" style="display: none; padding: 10px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin-top: 10px;">
-  動画をiPadに保存する
-</a>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iPad録画テスト</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    video { width: 100%; max-width: 400px; background: #000; border-radius: 8px; }
+    button { padding: 10px 20px; font-size: 16px; margin: 5px; cursor: pointer; }
+    #downloadLink {
+      display: none; /* 初期状態は非表示 */
+      padding: 10px 20px; background: #28a745; color: white;
+      text-decoration: none; border-radius: 5px; margin-top: 10px;
+      text-align: center; font-weight: bold;
+    }
+    .form-container { margin-top: 30px; padding: 15px; border: 1px solid #ccc; background: #f9f9f9; }
+  </style>
+</head>
+<body>
 
-<form id="uploadForm" action="/upload" method="POST" enctype="multipart/form-data" style="margin-top: 20px;">
-  <label for="videoFile">添付された動画:</label>
-  <input type="file" id="videoFile" name="video">
+  <h2>iPad 録画＆ダウンロードテスト</h2>
+
+  <!-- カメラのプレビュー領域 (iPad向けにplaysinlineが必須) -->
+  <video id="preview" autoplay muted playsinline></video>
+  <br>
+
+  <!-- 録画のコントロールボタン -->
+  <button id="startBtn">録画開始</button>
+  <button id="stopBtn" disabled>録画停止</button>
   <br><br>
-  <button type="submit">フォーム送信</button>
-</form>
 
-<script>
-// 録画完了時のハンドラー
-mediaRecorder.onstop = () => {
-  const mimeType = mediaRecorder.mimeType || 'video/mp4';
-  const blob = new Blob(recordedChunks, { type: mimeType });
-  const fileName = `recording_${Date.now()}.mp4`;
-  const file = new File([blob], fileName, { type: mimeType });
+  <!-- ダウンロード用ボタン -->
+  <a id="downloadLink">👇 ここをタップしてiPadに保存 👇</a>
 
-  const downloadUrl = URL.createObjectURL(blob);
+  <!-- 送信用フォーム -->
+  <div class="form-container">
+    <h3>送信フォーム</h3>
+    <form id="uploadForm" action="/upload" method="POST" enctype="multipart/form-data">
+      <label for="videoFile">添付された動画:</label><br>
+      <input type="file" id="videoFile" name="video">
+      <br><br>
+      <button type="submit">フォーム送信</button>
+    </form>
+  </div>
 
-  // 【変更点】自動で a.click() せず、リンクボタンにURLをセットして表示する
-  const downloadLink = document.getElementById('downloadLink');
-  downloadLink.href = downloadUrl;
-  downloadLink.download = fileName;
-  downloadLink.style.display = 'inline-block'; // ボタンを表示
-  downloadLink.textContent = '動画をiPadに保存する';
+  <script>
+    let mediaRecorder;
+    let recordedChunks = []; // 録画データを一時保存する配列
 
-  // 3. <input type="file"> へ自動添付 (こちらは自動で動きます)
-  const fileInput = document.getElementById('videoFile');
-  const dataTransfer = new DataTransfer();
-  dataTransfer.items.add(file);
-  fileInput.files = dataTransfer.files;
+    const preview = document.getElementById('preview');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const downloadLink = document.getElementById('downloadLink');
+    const fileInput = document.getElementById('videoFile');
 
-  console.log('フォームへの添付が完了しました。ダウンロードはボタンから行えます。');
-};
-</script>
+    // カメラとマイクの取得要求
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then(stream => {
+        // プレビューにカメラの映像を映す
+        preview.srcObject = stream;
+
+        // MediaRecorderの初期化（iPad SafariはデフォルトでMP4になります）
+        mediaRecorder = new MediaRecorder(stream);
+
+        // 録画データが生成されるたびに配列に保存
+        mediaRecorder.ondataavailable = function(event) {
+          if (event.data && event.data.size > 0) {
+            recordedChunks.push(event.data);
+          }
+        };
+
+        // 【重要】録画が停止した時の処理
+        mediaRecorder.onstop = function() {
+          // 1. 録画データを一つのBlob（ファイルデータ）にまとめる
+          const mimeType = mediaRecorder.mimeType || 'video/mp4';
+          const blob = new Blob(recordedChunks, { type: mimeType });
+          const fileName = `recording_${Date.now()}.mp4`;
+
+          // 2. BlobからURLを生成し、ダウンロードボタンにセットして表示
+          const downloadUrl = URL.createObjectURL(blob);
+          downloadLink.href = downloadUrl;
+          downloadLink.download = fileName;
+          downloadLink.style.display = 'inline-block'; // ここでボタンを表示！
+
+          // 3. フォームの <input type="file"> へ自動添付
+          const file = new File([blob], fileName, { type: mimeType });
+          const dataTransfer = new DataTransfer();
+          dataTransfer.items.add(file);
+          fileInput.files = dataTransfer.files;
+
+          alert("録画が完了しました。保存ボタンが表示されます。");
+        };
+      })
+      .catch(error => {
+        alert("カメラの取得に失敗しました: " + error.message);
+      });
+
+    // 「録画開始」ボタンを押した時の処理
+    startBtn.onclick = () => {
+      recordedChunks = []; // 前回のデータをクリア
+      mediaRecorder.start();
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      downloadLink.style.display = 'none'; // 録画中はダウンロードボタンを隠す
+    };
+
+    // 「録画停止」ボタンを押した時の処理
+    stopBtn.onclick = () => {
+      mediaRecorder.stop(); // ここでonstopイベントが発火し、ボタンが表示される
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+  </script>
+
+</body>
+</html>
