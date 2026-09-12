@@ -1,35 +1,38 @@
-<form id="uploadForm" action="/upload" method="POST" enctype="multipart/form-data">
+<!-- ダウンロード用ボタン（最初は非表示にしておく） -->
+<a id="downloadLink" style="display: none; padding: 10px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin-top: 10px;">
+  動画をiPadに保存する
+</a>
+
+<form id="uploadForm" action="/upload" method="POST" enctype="multipart/form-data" style="margin-top: 20px;">
   <label for="videoFile">添付された動画:</label>
-  <!-- JavaScriptからファイルが割り当てられます -->
   <input type="file" id="videoFile" name="video">
+  <br><br>
   <button type="submit">フォーム送信</button>
 </form>
 
 <script>
-// 録画完了時のハンドラー（MediaRecorderの onstop イベント内）
+// 録画完了時のハンドラー
 mediaRecorder.onstop = () => {
-  // 1. BlobからFileオブジェクトを作成
   const mimeType = mediaRecorder.mimeType || 'video/mp4';
   const blob = new Blob(recordedChunks, { type: mimeType });
   const fileName = `recording_${Date.now()}.mp4`;
   const file = new File([blob], fileName, { type: mimeType });
 
-  // 2. 自動ダウンロード処理
   const downloadUrl = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = downloadUrl;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(downloadUrl);
 
-  // 3. <input type="file"> へ自動添付 (DataTransfer APIを使用)
+  // 【変更点】自動で a.click() せず、リンクボタンにURLをセットして表示する
+  const downloadLink = document.getElementById('downloadLink');
+  downloadLink.href = downloadUrl;
+  downloadLink.download = fileName;
+  downloadLink.style.display = 'inline-block'; // ボタンを表示
+  downloadLink.textContent = '動画をiPadに保存する';
+
+  // 3. <input type="file"> へ自動添付 (こちらは自動で動きます)
   const fileInput = document.getElementById('videoFile');
   const dataTransfer = new DataTransfer();
   dataTransfer.items.add(file);
   fileInput.files = dataTransfer.files;
 
-  console.log('ダウンロード完了＆フォームへの添付が成功しました');
+  console.log('フォームへの添付が完了しました。ダウンロードはボタンから行えます。');
 };
 </script>
