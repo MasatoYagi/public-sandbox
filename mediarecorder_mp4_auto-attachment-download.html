@@ -1,0 +1,35 @@
+<form id="uploadForm" action="/upload" method="POST" enctype="multipart/form-data">
+  <label for="videoFile">添付された動画:</label>
+  <!-- JavaScriptからファイルが割り当てられます -->
+  <input type="file" id="videoFile" name="video">
+  <button type="submit">フォーム送信</button>
+</form>
+
+<script>
+// 録画完了時のハンドラー（MediaRecorderの onstop イベント内）
+mediaRecorder.onstop = () => {
+  // 1. BlobからFileオブジェクトを作成
+  const mimeType = mediaRecorder.mimeType || 'video/mp4';
+  const blob = new Blob(recordedChunks, { type: mimeType });
+  const fileName = `recording_${Date.now()}.mp4`;
+  const file = new File([blob], fileName, { type: mimeType });
+
+  // 2. 自動ダウンロード処理
+  const downloadUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(downloadUrl);
+
+  // 3. <input type="file"> へ自動添付 (DataTransfer APIを使用)
+  const fileInput = document.getElementById('videoFile');
+  const dataTransfer = new DataTransfer();
+  dataTransfer.items.add(file);
+  fileInput.files = dataTransfer.files;
+
+  console.log('ダウンロード完了＆フォームへの添付が成功しました');
+};
+</script>
