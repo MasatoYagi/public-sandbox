@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PDF編集デモ（PDF.jsのみ） — pdf-lib不使用</title>
+<style>
+  :root{
+    --ink:#12263a; --ink-2:#4a6076; --paper:#fff; --shell:#e6ebf1;
+    --line:#c3cfdd; --line-2:#dde5ee; --accent:#1c6fb0; --accent-ink:#0f4f80;
+    --warn:#a8501c; --pen:#e0403a; --radius:3px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--shell);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic",Meiryo,sans-serif;
+    font-size:14px;line-height:1.65;-webkit-text-size-adjust:100%}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px 16px 56px}
+  header.top{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 14px;
+    padding-bottom:12px;margin-bottom:18px;border-bottom:2px solid var(--ink)}
+  header.top h1{margin:0;font-size:19px;font-weight:700;letter-spacing:-.01em}
+  header.top .flow{font-size:12.5px;color:var(--ink-2)}
+  header.top .flow b{color:var(--accent-ink);font-weight:600}
+
+  .cols{display:grid;grid-template-columns:264px minmax(0,1fr);gap:18px;align-items:start}
+  @media (max-width:840px){.cols{grid-template-columns:1fr}}
+  .panel{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius)}
+  .panel > h2{margin:0;padding:9px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line-2)}
+  .panel .body{padding:12px}
+  .side .panel + .panel{margin-top:14px}
+
+  button,.filebtn{font:inherit;font-size:13px;cursor:pointer;border:1px solid var(--accent);
+    background:var(--accent);color:#fff;padding:7px 12px;border-radius:var(--radius)}
+  button.ghost{background:var(--paper);color:var(--accent-ink)}
+  button.ghost:hover:not(:disabled){background:#eef5fb}
+  button:hover:not(:disabled){background:var(--accent-ink);border-color:var(--accent-ink)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button:focus-visible,.filebtn:focus-within,input:focus-visible{outline:2px solid var(--pen);outline-offset:2px}
+  .filebtn{display:block;text-align:center;position:relative;overflow:hidden}
+  .filebtn input{position:absolute;inset:0;opacity:0;cursor:pointer;font-size:100px}
+  .row{display:flex;gap:8px;align-items:center}
+  .row > *{flex:1}
+  .field{margin-bottom:12px}
+  .field:last-child{margin-bottom:0}
+  .field > label{display:block;font-size:12px;color:var(--ink-2);margin-bottom:5px}
+  input[type=range]{width:100%}
+  .swatches{display:flex;gap:6px}
+  .swatch{flex:0 0 auto;width:28px;height:28px;border-radius:50%;border:2px solid var(--line);padding:0;cursor:pointer}
+  .swatch[aria-pressed=true]{border-color:var(--ink);background-clip:padding-box}
+  .hint{font-size:11.5px;color:var(--ink-2);margin:6px 0 0}
+  .pager{display:flex;align-items:center;gap:8px;justify-content:space-between}
+  .pager span{flex:0 0 auto;font-size:12.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+  .pager button{flex:0 0 auto;padding:5px 11px}
+  dl.env{margin:0;display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px}
+  dl.env dt{color:var(--ink-2)}
+  dl.env dd{margin:0;word-break:break-all}
+
+  .stage{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px;overflow:auto;max-height:76vh}
+  .sheet{position:relative;display:block;margin:0 auto;width:100%;line-height:0;
+    box-shadow:0 1px 0 rgba(18,38,58,.18),0 6px 18px rgba(18,38,58,.10)}
+  #pageCanvas{display:block;width:100%;height:auto;background:#fff}
+  #inkCanvas{position:absolute;left:0;top:0;width:100%;height:100%;touch-action:none;cursor:crosshair}
+  .empty{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:6px;
+    min-height:320px;color:var(--ink-2);border:1px dashed var(--line);border-radius:var(--radius);
+    text-align:center;padding:24px}
+  .empty strong{color:var(--ink);font-size:15px}
+
+  .log{margin-top:14px;background:#0f1c2b;color:#cfe0ef;border-radius:var(--radius);padding:10px 12px;
+    max-height:200px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:11.5px;line-height:1.7}
+  .log div{white-space:pre-wrap;word-break:break-all}
+  .log .t{color:#5f7d99} .log .ok{color:#7ddba6} .log .warn{color:#f0c065} .log .err{color:#ff9a90}
+  .caution{border-left:3px solid var(--warn);background:#fbf4ef;padding:8px 10px;font-size:12px;
+    margin:10px 0 0;color:#5c3a24}
+  .caution code{background:#f2e6dc;padding:1px 4px;border-radius:2px}
+  .badge{display:inline-block;font-size:10.5px;background:#f3e2d4;color:var(--warn);
+    border:1px solid #e0c3a8;border-radius:2px;padding:0 5px;margin-left:6px;vertical-align:1px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>PDF編集デモ（PDF.jsのみ）</h1>
+    <p class="flow"><b>PDF.js</b> で描画 → canvasに手書き → <b>saveDocument()</b> で保存（pdf-lib 不使用）</p>
+  </header>
+
+  <div class="cols">
+    <div class="side">
+
+      <section class="panel">
+        <h2>1. PDFを開く</h2>
+        <div class="body">
+          <label class="filebtn">PDFファイルを選ぶ
+            <input type="file" id="inputPdf" accept="application/pdf">
+          </label>
+          <p class="hint">ファイルはブラウザ内だけで処理されます。</p>
+          <div class="field" style="margin-top:12px">
+            <div class="pager">
+              <button class="ghost" id="btnPrev" disabled>前へ</button>
+              <span id="pageLabel">— / —</span>
+              <button class="ghost" id="btnNext" disabled>次へ</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>2. 書き込む</h2>
+        <div class="body">
+          <div class="field">
+            <label>ペンの色</label>
+            <div class="swatches" id="swatches"></div>
+          </div>
+          <div class="field">
+            <label>太さ <span id="thicknessLabel">3</span></label>
+            <input type="range" id="thickness" min="1" max="20" step="1" value="3">
+          </div>
+          <div class="row">
+            <button class="ghost" id="btnUndo" disabled>1画取り消す</button>
+            <button class="ghost" id="btnClear" disabled>全消去</button>
+          </div>
+          <p class="hint">指・マウス・Apple Pencil で描けます。線は pt 単位で保持するため、画面幅が変わっても位置はずれません。</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>3. 保存する</h2>
+        <div class="body">
+          <button id="btnSave" style="width:100%" disabled>Ink注釈として書き出す</button>
+          <div class="row" style="margin-top:8px">
+            <button class="ghost" id="btnDownload" disabled>ダウンロード</button>
+            <button class="ghost" id="btnReload" disabled>結果を開き直す</button>
+          </div>
+          <button class="ghost" id="btnInspect" style="width:100%;margin-top:6px" disabled>注釈とテキストを検査</button>
+          <p class="hint">保存直後に自動で検査します。ログに「Ink×n」が出れば成功です。</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>実行環境</h2>
+        <div class="body"><dl class="env" id="envList"></dl></div>
+      </section>
+    </div>
+
+    <div>
+      <div class="stage" id="stage">
+        <div class="empty" id="empty">
+          <strong>PDFが読み込まれていません</strong>
+          <span>左の「PDFファイルを選ぶ」から開いてください</span>
+        </div>
+        <div class="sheet" id="sheet" hidden>
+          <canvas id="pageCanvas"></canvas>
+          <canvas id="inkCanvas"></canvas>
+        </div>
+      </div>
+      <div class="log" id="log" aria-live="polite"></div>
+
+      <div class="caution">
+        <b>このファイルは <code>file://</code> では動きません。</b>ESモジュールを使うため、<code>npx serve .</code> などで
+        HTTP配信してから開いてください。<br>
+        また、書き出し処理は PDF.js の内部構造（<code>annotationStorage</code>）を直接利用しています<span class="badge">実験的</span>。
+        バージョンによって内部形式が変わる可能性があるため、保存後の自動検査で「Ink×n」が出るかを必ず確認してください。
+        表示と手書きは公開APIのみで実装しているため、こちらはバージョン差の影響を受けません。
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+// ============================================================
+//  エラーを画面に出す
+// ============================================================
+const logEl = document.getElementById('log');
+function log(msg, kind){
+  const t = new Date().toTimeString().slice(0,8);
+  const d = document.createElement('div');
+  d.innerHTML = '<span class="t">' + t + '</span> <span class="' + (kind||'') + '">' +
+    String(msg).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])) + '</span>';
+  logEl.appendChild(d); logEl.scrollTop = logEl.scrollHeight;
+}
+window.addEventListener('error', e => log('error: ' + e.message, 'err'));
+window.addEventListener('unhandledrejection', e => log('rejected: ' + (e.reason?.message || e.reason), 'err'));
+
+// ============================================================
+//  PDF.js（display層のみ）
+//  web/pdf_viewer.mjs は使わない。viewer部品に依存しないため、
+//  前回のような globalThis.pdfjsLib 問題は起きない。
+// ============================================================
+const BASE = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/';
+const pdfjsLib = await import(BASE + 'build/pdf.min.mjs');
+pdfjsLib.GlobalWorkerOptions.workerSrc = BASE + 'build/pdf.worker.min.mjs';
+log('PDF.js 読み込み完了（pdfjs-dist 4.10.38）', 'ok');
+
+const $ = id => document.getElementById(id);
+
+// ============================================================
+//  状態
+// ============================================================
+let pdfDoc = null;
+let pageNum = 1;
+let viewport = null;
+let savedBytes = null;
+const strokesByPage = new Map();   // pageNum -> [{color,thickness,points:[{x,y}]}]  座標はPDFユーザ空間(pt)
+let currentStroke = null;
+let penColor = '#e0403a';
+let penThickness = 3;
+
+const MAX_CANVAS_PX = 12000000;
+const pageCanvas = $('pageCanvas'), inkCanvas = $('inkCanvas');
+const pctx = pageCanvas.getContext('2d'), ictx = inkCanvas.getContext('2d');
+
+const strokes = () => {
+  if (!strokesByPage.has(pageNum)) strokesByPage.set(pageNum, []);
+  return strokesByPage.get(pageNum);
+};
+const totalStrokes = () => { let n = 0; strokesByPage.forEach(v => n += v.length); return n; };
+
+// ============================================================
+//  読み込み
+// ============================================================
+async function loadBytes(bytes, label){
+  if (pdfDoc) { await pdfDoc.destroy(); pdfDoc = null; }
+  pdfDoc = await pdfjsLib.getDocument({
+    data: bytes,
+    cMapUrl: BASE + 'cmaps/', cMapPacked: true,
+    standardFontDataUrl: BASE + 'standard_fonts/',
+  }).promise;
+  strokesByPage.clear();
+  savedBytes = null;
+  pageNum = 1;
+  $('empty').hidden = true;
+  $('sheet').hidden = false;
+  log(label + '（' + pdfDoc.numPages + 'ページ）', 'ok');
+  await renderPage();
+  sync();
+}
+
+$('inputPdf').addEventListener('change', async e => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try {
+    await loadBytes(new Uint8Array(await file.arrayBuffer()), file.name + ' を読み込みました');
+  } catch(err){ log('読み込みに失敗: ' + err.message, 'err'); }
+});
+
+// ============================================================
+//  描画（公開APIのみ）
+// ============================================================
+async function renderPage(){
+  const page = await pdfDoc.getPage(pageNum);
+  const base = page.getViewport({ scale: 1 });
+  const cssWidth = Math.max(280, $('stage').clientWidth - 30);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let scale = (cssWidth / base.width) * dpr;
+  const px = (base.width * scale) * (base.height * scale);
+  if (px > MAX_CANVAS_PX) {
+    scale *= Math.sqrt(MAX_CANVAS_PX / px);
+    log('canvas上限に合わせて描画倍率を ' + scale.toFixed(2) + ' に抑えました', 'warn');
+  }
+  viewport = page.getViewport({ scale });
+  for (const c of [pageCanvas, inkCanvas]) {
+    c.width = Math.floor(viewport.width);
+    c.height = Math.floor(viewport.height);
+  }
+  pctx.fillStyle = '#fff';
+  pctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+  await page.render({ canvasContext: pctx, viewport }).promise;
+  drawInk();
+  $('pageLabel').textContent = pageNum + ' / ' + pdfDoc.numPages;
+}
+
+function drawInk(){
+  ictx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+  ictx.lineJoin = ictx.lineCap = 'round';
+  const list = strokes().slice();
+  if (currentStroke) list.push(currentStroke);
+  for (const s of list) {
+    if (!s.points.length) continue;
+    ictx.strokeStyle = s.color;
+    ictx.lineWidth = Math.max(1, s.thickness * viewport.scale);
+    ictx.beginPath();
+    s.points.forEach((p, i) => {
+      const v = viewport.convertToViewportPoint(p.x, p.y);
+      if (i === 0) ictx.moveTo(v[0], v[1]); else ictx.lineTo(v[0], v[1]);
+    });
+    if (s.points.length === 1) {
+      const v = viewport.convertToViewportPoint(s.points[0].x, s.points[0].y);
+      ictx.lineTo(v[0] + 0.1, v[1]);
+    }
+    ictx.stroke();
+  }
+}
+
+// ============================================================
+//  入力（画面座標 → PDFユーザ空間pt）
+// ============================================================
+function toPdfPoint(ev){
+  const r = inkCanvas.getBoundingClientRect();
+  const vx = (ev.clientX - r.left) * (inkCanvas.width / r.width);
+  const vy = (ev.clientY - r.top) * (inkCanvas.height / r.height);
+  const p = viewport.convertToPdfPoint(vx, vy);
+  return { x: p[0], y: p[1] };
+}
+inkCanvas.addEventListener('pointerdown', ev => {
+  if (!viewport) return;
+  ev.preventDefault();
+  inkCanvas.setPointerCapture(ev.pointerId);
+  currentStroke = { color: penColor, thickness: penThickness, points: [toPdfPoint(ev)] };
+  drawInk();
+});
+inkCanvas.addEventListener('pointermove', ev => {
+  if (!currentStroke) return;
+  ev.preventDefault();
+  const p = toPdfPoint(ev);
+  const last = currentStroke.points.at(-1);
+  if (Math.hypot(p.x - last.x, p.y - last.y) < 0.7) return;
+  currentStroke.points.push(p);
+  drawInk();
+});
+function endStroke(ev){
+  if (!currentStroke) return;
+  if (ev?.pointerId != null && inkCanvas.hasPointerCapture(ev.pointerId)) inkCanvas.releasePointerCapture(ev.pointerId);
+  strokes().push(currentStroke);
+  currentStroke = null;
+  savedBytes = null;
+  drawInk(); sync();
+}
+for (const t of ['pointerup','pointercancel','pointerleave']) inkCanvas.addEventListener(t, endStroke);
+
+// ============================================================
+//  保存：PDF.js の annotationStorage に Ink注釈を登録して saveDocument()
+//
+//  通常は AnnotationEditorLayer（ユーザー操作）がここに値を入れる。
+//  ここでは同じ形式のデータを自前で組み立てて登録している。
+//  キーは "pdfjs_internal_editor_" で始まる必要がある（ワーカー側が
+//  このプレフィックスで新規注釈を判別するため）。
+// ============================================================
+const EDITOR_PREFIX = 'pdfjs_internal_editor_';
+
+function hexToRgb255(hex){
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// 折れ線を「制御点＝端点」の3次ベジェ列に変換する。
+// bezier: [x0,y0, c1x,c1y,c2x,c2y,x1,y1, ...]（先頭が始点、以降6個ずつ）
+function toBezier(points){
+  const out = [points[0].x, points[0].y];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i-1], b = points[i];
+    out.push(a.x, a.y, b.x, b.y, b.x, b.y);
+  }
+  return out;
+}
+
+function buildAnnotations(){
+  const storage = pdfDoc.annotationStorage;
+  let id = 0, count = 0;
+  for (const [n, list] of strokesByPage) {
+    for (const s of list) {
+      const pts = s.points.length > 1 ? s.points : [s.points[0], { x: s.points[0].x + 0.5, y: s.points[0].y }];
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+      const pad = s.thickness;
+      const rect = [Math.min(...xs) - pad, Math.min(...ys) - pad,
+                    Math.max(...xs) + pad, Math.max(...ys) + pad];
+      storage.setValue(EDITOR_PREFIX + (id++), {
+        annotationType: pdfjsLib.AnnotationEditorType.INK,   // = 15
+        color: hexToRgb255(s.color),
+        thickness: s.thickness,
+        opacity: 1,
+        paths: [{
+          bezier: toBezier(pts),
+          points: pts.flatMap(p => [p.x, p.y]),              // InkList に入る値
+        }],
+        pageIndex: n - 1,
+        rect,
+        rotation: 0,
+        structTreeParentId: null,
+      });
+      count++;
+    }
+  }
+  return count;
+}
+
+$('btnSave').addEventListener('click', async () => {
+  $('btnSave').disabled = true;
+  try {
+    const t0 = performance.now();
+    const n = buildAnnotations();
+    log(n + '件のInk注釈を annotationStorage に登録しました');
+    savedBytes = await pdfDoc.saveDocument();
+    log('書き出し完了: ' + (savedBytes.byteLength/1024).toFixed(1) + 'KB / ' +
+        Math.round(performance.now() - t0) + 'ms', 'ok');
+    await inspect();                                          // 成否をその場で確認
+  } catch(err){
+    log('書き出しに失敗: ' + err.message, 'err');
+    log('内部形式が変わっている可能性があります。公式 viewer.html での確認に切り替えてください', 'warn');
+  }
+  sync();
+});
+
+async function inspect(){
+  const doc = await pdfjsLib.getDocument({ data: savedBytes.slice(0) }).promise;
+  let chars = 0; const kinds = {};
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    chars += (await page.getTextContent()).items.reduce((a, it) => a + it.str.length, 0);
+    for (const a of await page.getAnnotations()) kinds[a.subtype] = (kinds[a.subtype] || 0) + 1;
+  }
+  const list = Object.entries(kinds).map(([k,v]) => k + '×' + v).join(', ');
+  if (kinds.Ink) log('検査: 注釈 = ' + list, 'ok');
+  else log('検査: Ink注釈が見つかりません（' + (list || '注釈なし') + '）内部形式が想定と異なる可能性があります', 'warn');
+  log('検査: 抽出できた文字数 = ' + chars + '（テキスト層が保持されていれば元PDFと同数）', chars > 0 ? 'ok' : 'warn');
+  await doc.destroy();
+}
+$('btnInspect').addEventListener('click', () => inspect().catch(e => log('検査に失敗: ' + e.message, 'err')));
+
+$('btnDownload').addEventListener('click', () => {
+  const url = URL.createObjectURL(new Blob([savedBytes], { type: 'application/pdf' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = 'annotated.pdf';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  log('annotated.pdf を出力しました');
+});
+
+$('btnReload').addEventListener('click', async () => {
+  try { await loadBytes(savedBytes.slice(0), '保存結果を開き直しました'); }
+  catch(err){ log('再読込に失敗: ' + err.message, 'err'); }
+});
+
+// ============================================================
+//  UI
+// ============================================================
+const COLORS = ['#e0403a','#1c6fb0','#1b6b4a','#f0a500','#12263a'];
+$('swatches').innerHTML = COLORS.map((c,i) =>
+  `<button class="swatch" data-c="${c}" aria-pressed="${i===0}" style="background:${c}" aria-label="${c}"></button>`).join('');
+$('swatches').addEventListener('click', e => {
+  const b = e.target.closest('.swatch'); if (!b) return;
+  penColor = b.dataset.c;
+  [...$('swatches').children].forEach(el => el.setAttribute('aria-pressed', String(el === b)));
+});
+$('thickness').addEventListener('input', e => {
+  penThickness = +e.target.value;
+  $('thicknessLabel').textContent = e.target.value;
+});
+$('btnPrev').addEventListener('click', async () => { if (pageNum > 1){ pageNum--; await renderPage(); sync(); } });
+$('btnNext').addEventListener('click', async () => { if (pageNum < pdfDoc.numPages){ pageNum++; await renderPage(); sync(); } });
+$('btnUndo').addEventListener('click', () => { strokes().pop(); savedBytes = null; drawInk(); sync(); });
+$('btnClear').addEventListener('click', () => { strokesByPage.clear(); savedBytes = null; drawInk(); sync(); log('書き込みを消去しました', 'warn'); });
+
+function sync(){
+  const on = !!pdfDoc;
+  $('btnPrev').disabled = !on || pageNum <= 1;
+  $('btnNext').disabled = !on || pageNum >= pdfDoc.numPages;
+  $('btnUndo').disabled = !on || strokes().length === 0;
+  $('btnClear').disabled = !on || totalStrokes() === 0;
+  $('btnSave').disabled = !on || totalStrokes() === 0;
+  $('btnDownload').disabled = !savedBytes;
+  $('btnReload').disabled = !savedBytes;
+  $('btnInspect').disabled = !savedBytes;
+}
+
+(function env(){
+  const ua = navigator.userAgent;
+  const isWebKit = /Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR/.test(ua);
+  const rows = [
+    ['エンジン', isWebKit ? 'WebKit（Safari系）' : 'Blink/その他'],
+    ['devicePixelRatio', String(window.devicePixelRatio || 1)],
+    ['pdfjs-dist', '4.10.38'],
+    ['AnnotationEditorType.INK', String(pdfjsLib.AnnotationEditorType?.INK)],
+    ['セキュアコンテキスト', window.isSecureContext ? 'はい' : 'いいえ'],
+  ];
+  $('envList').innerHTML = rows.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('');
+})();
+
+let rt = null;
+window.addEventListener('resize', () => {
+  if (!pdfDoc) return;
+  clearTimeout(rt); rt = setTimeout(() => renderPage(), 200);
+});
+log('準備完了。PDFを選んでください。');
+</script>
+</body>
+</html>
