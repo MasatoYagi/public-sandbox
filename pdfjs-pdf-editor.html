@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PDF.js 注釈エディタテスト (モバイル完全対応版 v3)</title>
+    <title>PDF.js 注釈エディタテスト (モバイル描画・完全対応版 v4)</title>
     <!-- PDF.js viewer用の必須CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf_viewer.min.css">
     <style>
@@ -14,8 +14,8 @@
             height: 100vh; 
             font-family: sans-serif; 
             background: #f5f5f5;
-            overscroll-behavior: none; /* スワイプによる戻る/進むを防止 */
-            overflow: hidden; /* body自体のスクロールを完全に禁止 */
+            overscroll-behavior: none; 
+            overflow: hidden; 
         }
         .controls { 
             padding: 10px; 
@@ -32,13 +32,13 @@
             margin-right: 5px; 
             margin-bottom: 5px; 
             cursor: pointer; 
+            font-weight: bold;
         }
         #status { 
             font-weight: bold; 
             color: blue; 
             font-size: 0.9em;
         }
-        /* Viewerコンテナの必須スタイル */
         .stagewrap { 
             position: relative; 
             flex: 1; 
@@ -51,24 +51,27 @@
             overflow: auto; 
         }
         
-        /* エディタレイヤーを常に前面に */
-        .pdfViewer .annotationEditorLayer {
-            z-index: 10 !important;
-        }
-        .pdfViewer .textLayer {
-            z-index: 1 !important;
-        }
-        
-        /* 描画モード時のスクロール完全ロック */
+        /* 
+         * ▼▼ 描画モード時のタッチ干渉を完全に防ぐCSS ▼▼
+         */
         .drawing-mode {
             touch-action: none !important;
         }
         .drawing-mode #viewerContainer {
-            overflow: hidden !important; 
-            touch-action: none !important;
+            overflow: hidden !important; /* スクロール禁止 */
         }
-        .drawing-mode .pdfViewer .page {
-            touch-action: none !important;
+        /* テキスト選択レイヤーがペンのタッチを奪うのを防ぐ */
+        .drawing-mode .pdfViewer .textLayer,
+        .drawing-mode .pdfViewer .canvasWrapper {
+            pointer-events: none !important; 
+        }
+        /* エディタレイヤーのみタッチを許可し、常に最前面へ */
+        .drawing-mode .pdfViewer .annotationEditorLayer {
+            pointer-events: auto !important;
+            z-index: 10 !important;
+        }
+        .pdfViewer .textLayer {
+            z-index: 1 !important;
         }
     </style>
 </head>
@@ -79,7 +82,7 @@
         </div>
         <div class="controls-row">
             <button id="modeNone" disabled>閲覧・スクロール</button>
-            <button id="modeInk" disabled>ペンで描く</button>
+            <button id="modeInk" disabled>ペンで描く (赤色)</button>
             <button id="saveBtn" disabled>保存・DL</button>
         </div>
         <div id="status">ファイルを選択してください</div>
@@ -99,9 +102,8 @@
 
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.mjs';
 
-        // ツールモードの定数をライブラリから直接取得（バージョン間のズレによる動作不良を防止）
         const EDITOR_INK = pdfjsLib.AnnotationEditorType.INK; 
-        const EDITOR_NONE = pdfjsLib.AnnotationEditorType.NONE; // もしくは DISABLE
+        const EDITOR_DISABLE = pdfjsLib.AnnotationEditorType.DISABLE; 
 
         let currentPdf = null;
         let originalFileName = "";
@@ -113,27 +115,29 @@
         const viewerContainer = document.getElementById('viewerContainer');
 
         const eventBus = new pdfjsViewer.EventBus();
+
+        // ★重要追加：エディタのタッチ・クリック操作を管理するUIマネージャー
+        // これがないと、モードを切り替えても描画イベントを受け取ってくれません
+        const annotationEditorUIManager = new pdfjsViewer.AnnotationEditorUIManager({
+            eventBus: eventBus
+        });
+
         const viewer = new pdfjsViewer.PDFViewer({
             container: viewerContainer,
             eventBus: eventBus,
-            annotationEditorMode: EDITOR_NONE, 
+            annotationEditorUIManager: annotationEditorUIManager, // UIマネージャーをバインド
+            annotationEditorMode: EDITOR_DISABLE, 
         });
 
-        // ーーースケール（見切れ）対策ーーー
-        // ①ページ構成の初期化時
+        // ページロード完了時にモバイル幅へスケールを合わせる
         eventBus.on('pagesinit', () => {
             viewer.currentScaleValue = 'page-width'; 
         });
-        
-        // ②★追加: 実際のページ描画が完了し、コンテナの横幅が確定したタイミングで再計算
         eventBus.on('pagerendered', (e) => {
-            // 全ページで計算し直すと重いため、1ページ目の描画時のみ実行
             if (e.pageNumber === 1) {
                 viewer.currentScaleValue = 'page-width';
             }
         });
-
-        // ③画面回転等のリサイズ時
         window.addEventListener('resize', () => {
             if (viewer.currentScaleValue !== 'page-width') {
                 viewer.currentScaleValue = 'page-width';
@@ -165,29 +169,35 @@
             }
         });
 
-        // 閲覧モードボタン
+        // 閲覧モード（描画オフ）
         modeNoneBtn.addEventListener('click', () => {
             viewerContainer.classList.remove('drawing-mode');
-            eventBus.dispatch('switchannotationeditormode', { source: window, mode: EDITOR_NONE });
+            
+            // エディタを完全に無効化してスクロールを優先する
+            eventBus.dispatch('switchannotationeditormode', { source: window, mode: EDITOR_DISABLE });
             statusEl.textContent = "モード: 閲覧・スクロール (描画不可)";
+            modeNoneBtn.style.background = "#ddd";
+            modeInkBtn.style.background = "";
         });
 
-        // ペンモードボタン
+        // ペンモード
         modeInkBtn.addEventListener('click', () => {
             viewerContainer.classList.add('drawing-mode');
             
-            // 取得した正しい定数（EDITOR_INK）をセットしてペンを有効化
+            // INKモードを有効化
             eventBus.dispatch('switchannotationeditormode', { source: window, mode: EDITOR_INK }); 
             
-            // ペンの色や太さ（パラメータ定数は固定値で動作します）
+            // ペンの色（赤）と太さ（4）を強制設定
             eventBus.dispatch('switchannotationeditorparams', {
-                source: window, type: 2, value: '#e0403a' // INK_COLOR: 赤色
+                source: window, type: 2, value: '#e0403a' // 2 = INK_COLOR
             });
             eventBus.dispatch('switchannotationeditorparams', {
-                source: window, type: 3, value: 4         // INK_THICKNESS: 4
+                source: window, type: 3, value: 4         // 3 = INK_THICKNESS
             });
             
-            statusEl.textContent = "モード: ペン (スクロールロック中)";
+            statusEl.textContent = "モード: ペン描画中 (指でなぞってください)";
+            modeInkBtn.style.background = "#ffcccc";
+            modeNoneBtn.style.background = "";
         });
 
         // 保存ボタン
