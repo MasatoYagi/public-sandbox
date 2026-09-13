@@ -1,10 +1,9 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <!-- 描画時の意図しない拡大縮小を防ぐため viewport を固定 -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PDF.js 注釈エディタテスト (モバイル完全対応版 v2)</title>
+    <title>PDF.js 注釈エディタテスト (モバイル完全対応版 v3)</title>
     <!-- PDF.js viewer用の必須CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf_viewer.min.css">
     <style>
@@ -16,6 +15,7 @@
             font-family: sans-serif; 
             background: #f5f5f5;
             overscroll-behavior: none; /* スワイプによる戻る/進むを防止 */
+            overflow: hidden; /* body自体のスクロールを完全に禁止 */
         }
         .controls { 
             padding: 10px; 
@@ -48,11 +48,10 @@
         #viewerContainer { 
             position: absolute; 
             top: 0; left: 0; right: 0; bottom: 0; 
-            overflow-x: hidden; /* 横スクロール（見切れ）を強制的に隠す */
-            overflow-y: auto; 
+            overflow: auto; 
         }
         
-        /* 常にエディタレイヤーをテキスト選択レイヤーより前面に出す */
+        /* エディタレイヤーを常に前面に */
         .pdfViewer .annotationEditorLayer {
             z-index: 10 !important;
         }
@@ -60,10 +59,13 @@
             z-index: 1 !important;
         }
         
-        /* ペンモード有効時：スクロールを完全に無効化して描画イベントを優先させる */
+        /* 描画モード時のスクロール完全ロック */
         .drawing-mode {
             touch-action: none !important;
-            overflow-y: hidden !important; /* 縦スクロールもロック */
+        }
+        .drawing-mode #viewerContainer {
+            overflow: hidden !important; 
+            touch-action: none !important;
         }
         .drawing-mode .pdfViewer .page {
             touch-action: none !important;
@@ -97,6 +99,10 @@
 
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.mjs';
 
+        // ツールモードの定数をライブラリから直接取得（バージョン間のズレによる動作不良を防止）
+        const EDITOR_INK = pdfjsLib.AnnotationEditorType.INK; 
+        const EDITOR_NONE = pdfjsLib.AnnotationEditorType.NONE; // もしくは DISABLE
+
         let currentPdf = null;
         let originalFileName = "";
 
@@ -110,22 +116,31 @@
         const viewer = new pdfjsViewer.PDFViewer({
             container: viewerContainer,
             eventBus: eventBus,
-            annotationEditorMode: 0, // 0: NONE
+            annotationEditorMode: EDITOR_NONE, 
         });
 
-        // モバイル環境での幅計算のズレを防ぐため、初期化から少し遅延させて幅を合わせる
+        // ーーースケール（見切れ）対策ーーー
+        // ①ページ構成の初期化時
         eventBus.on('pagesinit', () => {
-            setTimeout(() => {
-                viewer.currentScaleValue = 'page-width'; 
-            }, 100);
+            viewer.currentScaleValue = 'page-width'; 
+        });
+        
+        // ②★追加: 実際のページ描画が完了し、コンテナの横幅が確定したタイミングで再計算
+        eventBus.on('pagerendered', (e) => {
+            // 全ページで計算し直すと重いため、1ページ目の描画時のみ実行
+            if (e.pageNumber === 1) {
+                viewer.currentScaleValue = 'page-width';
+            }
         });
 
+        // ③画面回転等のリサイズ時
         window.addEventListener('resize', () => {
             if (viewer.currentScaleValue !== 'page-width') {
                 viewer.currentScaleValue = 'page-width';
             }
         });
 
+        // ファイル読み込み処理
         document.getElementById('fileInput').addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -150,19 +165,32 @@
             }
         });
 
+        // 閲覧モードボタン
         modeNoneBtn.addEventListener('click', () => {
             viewerContainer.classList.remove('drawing-mode');
-            eventBus.dispatch('switchannotationeditormode', { source: window, mode: 0 }); // 0: NONE
+            eventBus.dispatch('switchannotationeditormode', { source: window, mode: EDITOR_NONE });
             statusEl.textContent = "モード: 閲覧・スクロール (描画不可)";
         });
 
+        // ペンモードボタン
         modeInkBtn.addEventListener('click', () => {
             viewerContainer.classList.add('drawing-mode');
-            // 【重要】PDF.js v4+ における INK (ペン) ツールの正しい値は "4"
-            eventBus.dispatch('switchannotationeditormode', { source: window, mode: 4 }); 
+            
+            // 取得した正しい定数（EDITOR_INK）をセットしてペンを有効化
+            eventBus.dispatch('switchannotationeditormode', { source: window, mode: EDITOR_INK }); 
+            
+            // ペンの色や太さ（パラメータ定数は固定値で動作します）
+            eventBus.dispatch('switchannotationeditorparams', {
+                source: window, type: 2, value: '#e0403a' // INK_COLOR: 赤色
+            });
+            eventBus.dispatch('switchannotationeditorparams', {
+                source: window, type: 3, value: 4         // INK_THICKNESS: 4
+            });
+            
             statusEl.textContent = "モード: ペン (スクロールロック中)";
         });
 
+        // 保存ボタン
         saveBtn.addEventListener('click', async () => {
             if (!currentPdf) return;
             statusEl.textContent = "保存処理中...";
