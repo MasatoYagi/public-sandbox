@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+    <!-- 描画時の意図しない拡大縮小を防ぐため viewport を固定 -->
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF.js 注釈エディタテスト (モバイル完全対応版)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PDF.js 注釈エディタテスト (モバイル完全対応版 v2)</title>
     <!-- PDF.js viewer用の必須CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf_viewer.min.css">
     <style>
@@ -14,6 +15,7 @@
             height: 100vh; 
             font-family: sans-serif; 
             background: #f5f5f5;
+            overscroll-behavior: none; /* スワイプによる戻る/進むを防止 */
         }
         .controls { 
             padding: 10px; 
@@ -46,12 +48,10 @@
         #viewerContainer { 
             position: absolute; 
             top: 0; left: 0; right: 0; bottom: 0; 
-            overflow: auto; 
+            overflow-x: hidden; /* 横スクロール（見切れ）を強制的に隠す */
+            overflow-y: auto; 
         }
         
-        /* 
-         * ▼▼ モバイル操作改善用のCSS ▼▼
-         */
         /* 常にエディタレイヤーをテキスト選択レイヤーより前面に出す */
         .pdfViewer .annotationEditorLayer {
             z-index: 10 !important;
@@ -63,9 +63,9 @@
         /* ペンモード有効時：スクロールを完全に無効化して描画イベントを優先させる */
         .drawing-mode {
             touch-action: none !important;
-            overflow: hidden !important; 
+            overflow-y: hidden !important; /* 縦スクロールもロック */
         }
-        .drawing-mode .pdfViewer {
+        .drawing-mode .pdfViewer .page {
             touch-action: none !important;
         }
     </style>
@@ -77,7 +77,7 @@
         </div>
         <div class="controls-row">
             <button id="modeNone" disabled>閲覧・スクロール</button>
-            <button id="modeInk" disabled>ペンで描く (赤)</button>
+            <button id="modeInk" disabled>ペンで描く</button>
             <button id="saveBtn" disabled>保存・DL</button>
         </div>
         <div id="status">ファイルを選択してください</div>
@@ -95,7 +95,6 @@
         import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.mjs';
         import * as pdfjsViewer from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf_viewer.mjs';
 
-        // ワーカーの設定
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.mjs';
 
         let currentPdf = null;
@@ -107,32 +106,26 @@
         const saveBtn = document.getElementById('saveBtn');
         const viewerContainer = document.getElementById('viewerContainer');
 
-        // ① EventBusとViewerの初期化
         const eventBus = new pdfjsViewer.EventBus();
         const viewer = new pdfjsViewer.PDFViewer({
             container: viewerContainer,
             eventBus: eventBus,
-            // 0 (NONE) = エディタ層は有効化するが、初期状態はツール未選択
-            annotationEditorMode: 0, 
+            annotationEditorMode: 0, // 0: NONE
         });
 
-        // スケール調整（モバイルでの見切れ対策）
-        // DOMの準備完了時と、実際のページロード完了時の両方で幅合わせを実行
+        // モバイル環境での幅計算のズレを防ぐため、初期化から少し遅延させて幅を合わせる
         eventBus.on('pagesinit', () => {
-            viewer.currentScaleValue = 'page-width'; 
-        });
-        eventBus.on('pagesloaded', () => {
-            viewer.currentScaleValue = 'page-width'; 
+            setTimeout(() => {
+                viewer.currentScaleValue = 'page-width'; 
+            }, 100);
         });
 
-        // 画面回転時などのリサイズ対応
         window.addEventListener('resize', () => {
             if (viewer.currentScaleValue !== 'page-width') {
                 viewer.currentScaleValue = 'page-width';
             }
         });
 
-        // ② ファイル読み込みと表示
         document.getElementById('fileInput').addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -157,34 +150,19 @@
             }
         });
 
-        // ③ ツール切り替えとスクロール制御（モバイル対応）
         modeNoneBtn.addEventListener('click', () => {
-            // スクロール可能にする
             viewerContainer.classList.remove('drawing-mode');
             eventBus.dispatch('switchannotationeditormode', { source: window, mode: 0 }); // 0: NONE
             statusEl.textContent = "モード: 閲覧・スクロール (描画不可)";
         });
 
         modeInkBtn.addEventListener('click', () => {
-            // スクロールをロックして描画に専念させる
             viewerContainer.classList.add('drawing-mode');
-            eventBus.dispatch('switchannotationeditormode', { source: window, mode: 15 }); // 15: INK
-            
-            // ペンの色や太さを指定
-            eventBus.dispatch('switchannotationeditorparams', {
-                source: window,
-                type: 2, // INK_COLOR
-                value: '#e0403a' // 赤色
-            });
-            eventBus.dispatch('switchannotationeditorparams', {
-                source: window,
-                type: 3, // INK_THICKNESS
-                value: 4
-            });
+            // 【重要】PDF.js v4+ における INK (ペン) ツールの正しい値は "4"
+            eventBus.dispatch('switchannotationeditormode', { source: window, mode: 4 }); 
             statusEl.textContent = "モード: ペン (スクロールロック中)";
         });
 
-        // ④ PDF.jsの標準機能で保存
         saveBtn.addEventListener('click', async () => {
             if (!currentPdf) return;
             statusEl.textContent = "保存処理中...";
