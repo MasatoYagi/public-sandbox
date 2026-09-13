@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF.js 注釈エディタテスト (メモリ対策版)</title>
+    <title>PDF.js 注釈エディタテスト (モバイル表示・操作対応版)</title>
     <!-- PDF.js viewer用の必須CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf_viewer.min.css">
     <style>
@@ -20,7 +20,20 @@
             border-bottom: 1px solid #ccc;
             z-index: 10;
         }
-        button { padding: 5px 10px; margin-right: 5px; cursor: pointer; }
+        .controls-row {
+            margin-bottom: 8px;
+        }
+        button { 
+            padding: 8px 12px; 
+            margin-right: 5px; 
+            margin-bottom: 5px; 
+            cursor: pointer; 
+        }
+        #status { 
+            font-weight: bold; 
+            color: blue; 
+            font-size: 0.9em;
+        }
         /* Viewerコンテナの必須スタイル */
         .stagewrap { 
             position: relative; 
@@ -33,15 +46,24 @@
             top: 0; left: 0; right: 0; bottom: 0; 
             overflow: auto; 
         }
+        
+        /* ペン描画時にブラウザのスクロールを防止して描きやすくする */
+        .pdfViewer .annotationEditorLayer {
+            touch-action: none;
+        }
     </style>
 </head>
 <body>
     <div class="controls">
-        <input type="file" id="fileInput" accept="application/pdf" />
-        <button id="modeNone" disabled>閲覧・スクロール</button>
-        <button id="modeInk" disabled>ペンで描く (赤)</button>
-        <button id="saveBtn" disabled>保存・ダウンロード</button>
-        <span id="status" style="margin-left: 10px; font-weight: bold; color: blue;">ファイルを選択してください</span>
+        <div class="controls-row">
+            <input type="file" id="fileInput" accept="application/pdf" />
+        </div>
+        <div class="controls-row">
+            <button id="modeNone" disabled>閲覧・スクロール</button>
+            <button id="modeInk" disabled>ペンで描く (赤)</button>
+            <button id="saveBtn" disabled>保存・ダウンロード</button>
+        </div>
+        <div id="status">ファイルを選択してください</div>
     </div>
 
     <!-- PDF.jsのViewer部品をマウントするDOM -->
@@ -75,6 +97,18 @@
             eventBus: eventBus,
             // 0 (NONE) = エディタ層は有効化するが、初期状態はツール未選択
             annotationEditorMode: 0, 
+        });
+
+        // ページ要素の準備が完了したタイミングで自動的に幅を合わせる（モバイル対応）
+        eventBus.on('pagesinit', () => {
+            viewer.currentScaleValue = 'page-width'; 
+        });
+
+        // 画面サイズが変更・回転されたら倍率を再計算する（モバイル対応）
+        window.addEventListener('resize', () => {
+            if (viewer.currentScaleValue !== 'page-width') {
+                viewer.currentScaleValue = 'page-width';
+            }
         });
 
         // ② ファイル読み込みと表示
