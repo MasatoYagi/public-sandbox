@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF.js 注釈エディタテスト (メモリ対策版)</title>
+    <!-- PDF.js viewer用の必須CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf_viewer.min.css">
+    <style>
+        body { 
+            margin: 0; 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh; 
+            font-family: sans-serif; 
+        }
+        .controls { 
+            padding: 10px; 
+            background: #f5f5f5; 
+            border-bottom: 1px solid #ccc;
+            z-index: 10;
+        }
+        button { padding: 5px 10px; margin-right: 5px; cursor: pointer; }
+        /* Viewerコンテナの必須スタイル */
+        .stagewrap { 
+            position: relative; 
+            flex: 1; 
+            overflow: hidden; 
+            background: #808080;
+        }
+        #viewerContainer { 
+            position: absolute; 
+            top: 0; left: 0; right: 0; bottom: 0; 
+            overflow: auto; 
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <input type="file" id="fileInput" accept="application/pdf" />
+        <button id="modeNone" disabled>閲覧・スクロール</button>
+        <button id="modeInk" disabled>ペンで描く (赤)</button>
+        <button id="saveBtn" disabled>保存・ダウンロード</button>
+        <span id="status" style="margin-left: 10px; font-weight: bold; color: blue;">ファイルを選択してください</span>
+    </div>
+
+    <!-- PDF.jsのViewer部品をマウントするDOM -->
+    <div class="stagewrap">
+        <div id="viewerContainer">
+            <div id="viewer" class="pdfViewer"></div>
+        </div>
+    </div>
+
+    <!-- ESモジュールとしてPDF.jsを読み込む -->
+    <script type="module">
+        import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.mjs';
+        import * as pdfjsViewer from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf_viewer.mjs';
+
+        // ワーカーの設定
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.mjs';
+
+        let currentPdf = null;
+        let originalFileName = "";
+
+        const statusEl = document.getElementById('status');
+        const modeNoneBtn = document.getElementById('modeNone');
+        const modeInkBtn = document.getElementById('modeInk');
+        const saveBtn = document.getElementById('saveBtn');
+
+        // ① EventBusとViewerの初期化
+        const eventBus = new pdfjsViewer.EventBus();
+        const viewerContainer = document.getElementById('viewerContainer');
+        const viewer = new pdfjsViewer.PDFViewer({
+            container: viewerContainer,
+            eventBus: eventBus,
+            // 0 (NONE) = エディタ層は有効化するが、初期状態はツール未選択
+            annotationEditorMode: 0, 
+        });
+
+        // ② ファイル読み込みと表示
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            originalFileName = file.name;
+            statusEl.textContent = "読み込み中...";
+            
+            const arrayBuffer = await file.arrayBuffer();
+            
+            try {
+                const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+                currentPdf = await loadingTask.promise;
+                
+                // ViewerにPDFをセット（仮想化・ページ管理を自動処理）
+                viewer.setDocument(currentPdf);
+                
+                statusEl.textContent = "準備完了";
+                modeNoneBtn.disabled = false;
+                modeInkBtn.disabled = false;
+                saveBtn.disabled = false;
+            } catch (error) {
+                statusEl.textContent = "エラー: " + error.message;
+            }
+        });
+
+        // ③ ツール切り替えイベントの発行
+        modeNoneBtn.addEventListener('click', () => {
+            eventBus.dispatch('switchannotationeditormode', { source: window, mode: 0 }); // 0: NONE
+            statusEl.textContent = "モード: 閲覧・スクロール";
+        });
+
+        modeInkBtn.addEventListener('click', () => {
+            eventBus.dispatch('switchannotationeditormode', { source: window, mode: 15 }); // 15: INK
+            // ペンの色や太さを指定
+            eventBus.dispatch('switchannotationeditorparams', {
+                source: window,
+                type: 2, // INK_COLOR
+                value: '#e0403a' // 赤色
+            });
+            eventBus.dispatch('switchannotationeditorparams', {
+                source: window,
+                type: 3, // INK_THICKNESS
+                value: 4
+            });
+            statusEl.textContent = "モード: ペン（ページをドラッグして描画）";
+        });
+
+        // ④ PDF.jsの標準機能で保存
+        saveBtn.addEventListener('click', async () => {
+            if (!currentPdf) return;
+            statusEl.textContent = "保存処理中...";
+            
+            try {
+                // 注釈データを焼き込んだ新しいPDFバイト列を生成
+                const bytes = await currentPdf.saveDocument();
+                
+                const blob = new Blob([bytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'edited_' + originalFileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                statusEl.textContent = "保存完了 (※続けて編集する場合は再読み込みを推奨)";
+            } catch (error) {
+                statusEl.textContent = "保存エラー: " + error.message;
+            }
+        });
+    </script>
+</body>
+</html>
