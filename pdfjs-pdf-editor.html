@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF.js 注釈エディタテスト (モバイル表示・操作対応版)</title>
+    <title>PDF.js 注釈エディタテスト (モバイル完全対応版)</title>
     <!-- PDF.js viewer用の必須CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf_viewer.min.css">
     <style>
@@ -13,12 +13,14 @@
             flex-direction: column; 
             height: 100vh; 
             font-family: sans-serif; 
+            background: #f5f5f5;
         }
         .controls { 
             padding: 10px; 
-            background: #f5f5f5; 
+            background: #ffffff; 
             border-bottom: 1px solid #ccc;
-            z-index: 10;
+            z-index: 100;
+            flex-shrink: 0;
         }
         .controls-row {
             margin-bottom: 8px;
@@ -47,9 +49,24 @@
             overflow: auto; 
         }
         
-        /* ペン描画時にブラウザのスクロールを防止して描きやすくする */
+        /* 
+         * ▼▼ モバイル操作改善用のCSS ▼▼
+         */
+        /* 常にエディタレイヤーをテキスト選択レイヤーより前面に出す */
         .pdfViewer .annotationEditorLayer {
-            touch-action: none;
+            z-index: 10 !important;
+        }
+        .pdfViewer .textLayer {
+            z-index: 1 !important;
+        }
+        
+        /* ペンモード有効時：スクロールを完全に無効化して描画イベントを優先させる */
+        .drawing-mode {
+            touch-action: none !important;
+            overflow: hidden !important; 
+        }
+        .drawing-mode .pdfViewer {
+            touch-action: none !important;
         }
     </style>
 </head>
@@ -61,7 +78,7 @@
         <div class="controls-row">
             <button id="modeNone" disabled>閲覧・スクロール</button>
             <button id="modeInk" disabled>ペンで描く (赤)</button>
-            <button id="saveBtn" disabled>保存・ダウンロード</button>
+            <button id="saveBtn" disabled>保存・DL</button>
         </div>
         <div id="status">ファイルを選択してください</div>
     </div>
@@ -88,10 +105,10 @@
         const modeNoneBtn = document.getElementById('modeNone');
         const modeInkBtn = document.getElementById('modeInk');
         const saveBtn = document.getElementById('saveBtn');
+        const viewerContainer = document.getElementById('viewerContainer');
 
         // ① EventBusとViewerの初期化
         const eventBus = new pdfjsViewer.EventBus();
-        const viewerContainer = document.getElementById('viewerContainer');
         const viewer = new pdfjsViewer.PDFViewer({
             container: viewerContainer,
             eventBus: eventBus,
@@ -99,12 +116,16 @@
             annotationEditorMode: 0, 
         });
 
-        // ページ要素の準備が完了したタイミングで自動的に幅を合わせる（モバイル対応）
+        // スケール調整（モバイルでの見切れ対策）
+        // DOMの準備完了時と、実際のページロード完了時の両方で幅合わせを実行
         eventBus.on('pagesinit', () => {
             viewer.currentScaleValue = 'page-width'; 
         });
+        eventBus.on('pagesloaded', () => {
+            viewer.currentScaleValue = 'page-width'; 
+        });
 
-        // 画面サイズが変更・回転されたら倍率を再計算する（モバイル対応）
+        // 画面回転時などのリサイズ対応
         window.addEventListener('resize', () => {
             if (viewer.currentScaleValue !== 'page-width') {
                 viewer.currentScaleValue = 'page-width';
@@ -125,7 +146,6 @@
                 const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
                 currentPdf = await loadingTask.promise;
                 
-                // ViewerにPDFをセット（仮想化・ページ管理を自動処理）
                 viewer.setDocument(currentPdf);
                 
                 statusEl.textContent = "準備完了";
@@ -137,14 +157,19 @@
             }
         });
 
-        // ③ ツール切り替えイベントの発行
+        // ③ ツール切り替えとスクロール制御（モバイル対応）
         modeNoneBtn.addEventListener('click', () => {
+            // スクロール可能にする
+            viewerContainer.classList.remove('drawing-mode');
             eventBus.dispatch('switchannotationeditormode', { source: window, mode: 0 }); // 0: NONE
-            statusEl.textContent = "モード: 閲覧・スクロール";
+            statusEl.textContent = "モード: 閲覧・スクロール (描画不可)";
         });
 
         modeInkBtn.addEventListener('click', () => {
+            // スクロールをロックして描画に専念させる
+            viewerContainer.classList.add('drawing-mode');
             eventBus.dispatch('switchannotationeditormode', { source: window, mode: 15 }); // 15: INK
+            
             // ペンの色や太さを指定
             eventBus.dispatch('switchannotationeditorparams', {
                 source: window,
@@ -156,7 +181,7 @@
                 type: 3, // INK_THICKNESS
                 value: 4
             });
-            statusEl.textContent = "モード: ペン（ページをドラッグして描画）";
+            statusEl.textContent = "モード: ペン (スクロールロック中)";
         });
 
         // ④ PDF.jsの標準機能で保存
@@ -165,9 +190,7 @@
             statusEl.textContent = "保存処理中...";
             
             try {
-                // 注釈データを焼き込んだ新しいPDFバイト列を生成
                 const bytes = await currentPdf.saveDocument();
-                
                 const blob = new Blob([bytes], { type: 'application/pdf' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -178,7 +201,7 @@
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
                 
-                statusEl.textContent = "保存完了 (※続けて編集する場合は再読み込みを推奨)";
+                statusEl.textContent = "保存完了 (※続けて編集する場合は再読み込み推奨)";
             } catch (error) {
                 statusEl.textContent = "保存エラー: " + error.message;
             }
