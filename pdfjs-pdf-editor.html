@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PDF.js 注釈エディタテスト (モバイル描画・完全対応版 v5)</title>
+    <title>PDF.js 注釈エディタテスト (モバイル完全対応版 v6)</title>
     <!-- PDF.js viewer用の必須CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf_viewer.min.css">
     <style>
@@ -51,27 +51,17 @@
             overflow: auto; 
         }
         
-        /* 
-         * ▼▼ 描画モード時のタッチ干渉を完全に防ぐCSS ▼▼
-         */
+        /* 描画モード時のスクロールとピンチズームを完全に防ぐ */
         .drawing-mode {
             touch-action: none !important;
         }
         .drawing-mode #viewerContainer {
-            overflow: hidden !important; /* スクロール禁止 */
+            overflow: hidden !important; 
         }
-        /* テキスト選択レイヤーや背景がペンのタッチを奪うのを防ぐ */
-        .drawing-mode .pdfViewer .textLayer,
-        .drawing-mode .pdfViewer .canvasWrapper {
-            pointer-events: none !important; 
-        }
-        /* エディタレイヤーのみタッチを許可し、常に最前面へ */
-        .drawing-mode .pdfViewer .annotationEditorLayer {
-            pointer-events: auto !important;
+        
+        /* エディタレイヤーを常に最前面に */
+        .pdfViewer .annotationEditorLayer {
             z-index: 10 !important;
-        }
-        .pdfViewer .textLayer {
-            z-index: 1 !important;
         }
     </style>
 </head>
@@ -102,7 +92,6 @@
 
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.mjs';
 
-        // ツールモードの定数をライブラリから取得
         const EDITOR_INK = pdfjsLib.AnnotationEditorType.INK; 
         const EDITOR_NONE = pdfjsLib.AnnotationEditorType.NONE; 
 
@@ -116,19 +105,31 @@
         const viewerContainer = document.getElementById('viewerContainer');
         const fileInput = document.getElementById('fileInput');
 
-        // 同じファイルを連続で選択できるように入力をリセット
         fileInput.addEventListener('click', function() {
             this.value = '';
         });
 
         const eventBus = new pdfjsViewer.EventBus();
+
+        // ★追加: 描画時のサイレントクラッシュを防ぐためのダミー言語設定
+        const dummyL10n = {
+            get: async (key, args, fallback) => fallback || key,
+            has: async (key) => false,
+            getLanguage: () => 'ja',
+            getDirection: () => 'ltr',
+            translate: async (element) => {}
+        };
+
         const viewer = new pdfjsViewer.PDFViewer({
             container: viewerContainer,
             eventBus: eventBus,
+            l10n: dummyL10n,                 // 必須：ツールチップ生成エラーの回避
+            annotationEditorEnabled: true,   // 必須：エディタモジュールの明示的な有効化
             annotationEditorMode: EDITOR_NONE, 
+            textLayerMode: 0,                // 必須：0(DISABLE)に設定し、テキストレイヤーのタッチ干渉を排除
         });
 
-        // ページロード完了時にモバイル幅へスケールを合わせる
+        // スケール調整
         eventBus.on('pagesinit', () => {
             viewer.currentScaleValue = 'page-width'; 
         });
@@ -164,14 +165,13 @@
                 modeInkBtn.disabled = false;
                 saveBtn.disabled = false;
                 
-                // 初期状態は閲覧モード
                 modeNoneBtn.click();
             } catch (error) {
                 statusEl.textContent = "エラー: " + error.message;
             }
         });
 
-        // 閲覧モード（描画オフ）
+        // 閲覧モード
         modeNoneBtn.addEventListener('click', () => {
             viewerContainer.classList.remove('drawing-mode');
             eventBus.dispatch('switchannotationeditormode', { source: window, mode: EDITOR_NONE });
@@ -183,11 +183,9 @@
         // ペンモード
         modeInkBtn.addEventListener('click', () => {
             viewerContainer.classList.add('drawing-mode');
-            
-            // INKモードを有効化
             eventBus.dispatch('switchannotationeditormode', { source: window, mode: EDITOR_INK }); 
             
-            // ペンの色（赤）と太さ（4）を設定
+            // ペンの色（赤）と太さ（4）
             eventBus.dispatch('switchannotationeditorparams', {
                 source: window, type: 2, value: '#e0403a' // INK_COLOR
             });
