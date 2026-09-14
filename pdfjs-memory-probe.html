@@ -1,0 +1,219 @@
+
+
+Pdfjs memory probe · HTML
+<!DOCTYPE html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF.js メモリ計測プローブ</title> 
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 16px;
+    font: 15px/1.5 -apple-system, system-ui, sans-serif;
+  }
+  h1 { font-size: 17px; margin: 0 0 12px; font-weight: 600; }
+  .phase {
+    padding: 14px 16px; margin-bottom: 12px;
+    border: 2px solid currentColor; border-radius: 6px;
+  }
+  .phase-name { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+  .clock { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .controls { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  label { display: block; }
+  button, select, input[type=file] { font-size: 16px; padding: 10px; width: 100%; }
+  button { font-weight: 600; }
+  #log {
+    white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px; line-height: 1.45;
+    border: 1px solid; padding: 10px; border-radius: 6px;
+    min-height: 200px; margin: 0;
+  }
+  .note { opacity: 0.7; font-size: 13px; }
+</style>
+ 
+<h1>PDF.js メモリ計測プローブ</h1>
+ 
+<div class="phase">
+  <div class="phase-name" id="phase">待機中</div>
+  <div class="clock" id="clock">--:--:--</div>
+</div>
+ 
+<div class="controls">
+  <label>
+    シナリオ
+    <select id="scenario">
+      <option value="few">A: 先頭2ページのみ閲覧して保存</option>
+      <option value="all">B: 全ページ閲覧してから保存（キャッシュ蓄積の検証）</option>
+      <option value="saveonly">C: 閲覧せず保存のみ（下限の測定）</option>
+    </select>
+  </label>
+  <label>
+    各フェーズの停止時間 (ms)
+    <input type="number" id="dwell" value="10000" step="1000" min="2000">
+  </label>
+  <label>
+    描画倍率（1.0 = 等倍。canvas 実メモリはこの二乗で効く）
+    <input type="number" id="scale" value="1.5" step="0.25" min="0.5">
+  </label>
+  <label>
+    対象 PDF
+    <input type="file" id="file" accept="application/pdf">
+  </label>
+  <button id="run" disabled>計測を開始</button>
+  <button id="copy">ログをコピー</button>
+</div>
+ 
+<pre id="log"></pre>
+<p class="note">
+  各フェーズ開始時に画面上部の表示が切り替わり、その時刻がログに残ります。
+  Console.app 側で <code>MemoryPressure</code> の行が出た時刻を、この時刻表に突き合わせてください。
+</p>
+ 
+<script type="module">
+// ── 実際に使う版に合わせて書き換える ─────────────────────────
+const PDFJS_VERSION = "5.7.284";
+const BASE = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}`;
+// ──────────────────────────────────────────────────────────
+ 
+const pdfjs = await import(`${BASE}/build/pdf.min.mjs`);
+pdfjs.GlobalWorkerOptions.workerSrc = `${BASE}/build/pdf.worker.min.mjs`;
+ 
+const el = id => document.getElementById(id);
+const lines = [];
+ 
+const wall = () => new Date().toTimeString().slice(0, 8);
+ 
+function log(msg) {
+  const line = `${wall()}  ${msg}`;
+  lines.push(line);
+  el("log").textContent = lines.join("\n");
+  console.log(line);
+}
+ 
+function tick() { el("clock").textContent = wall(); }
+setInterval(tick, 500);
+tick();
+ 
+// フェーズを表示し、DWELL_MS 停止する。
+// 停止中に落ちた場合、Console.app の kill ログの時刻からフェーズが特定できる。
+async function phase(name) {
+  el("phase").textContent = name;
+  log(`PHASE ${name}`);
+  await new Promise(r => setTimeout(r, Number(el("dwell").value)));
+}
+ 
+el("file").addEventListener("change", () => {
+  el("run").disabled = !el("file").files.length;
+});
+ 
+el("copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(lines.join("\n"));
+    log("(ログをクリップボードにコピーしました)");
+  } catch {
+    log("(コピーに失敗。手動で選択してください)");
+  }
+});
+ 
+el("run").addEventListener("click", async () => {
+  el("run").disabled = true;
+  const file = el("file").files[0];
+  const scenario = el("scenario").value;
+  const scale = Number(el("scale").value);
+ 
+  lines.length = 0;
+  log(`file=${file.name} size=${(file.size / 1048576).toFixed(1)}MB ` +
+      `scenario=${scenario} scale=${scale} pdfjs=${PDFJS_VERSION}`);
+  log(`UA=${navigator.userAgent}`);
+  log(`deviceMemory=${navigator.deviceMemory ?? "N/A"} ` +
+      `hardwareConcurrency=${navigator.hardwareConcurrency}`);
+ 
+  const canvases = [];
+ 
+  try {
+    await phase("0-baseline");
+ 
+    await phase("1-arraybuffer");
+    const buf = await file.arrayBuffer();
+    log(`  arrayBuffer bytes=${buf.byteLength}`);
+ 
+    await phase("2-getDocument");
+    // arrayBuffer は転送されるため、buf はこの後 detached になる。
+    // saveDocument は worker 側が保持する元バイト列を使う。
+    const doc = await pdfjs.getDocument({ data: buf }).promise;
+    log(`  numPages=${doc.numPages} fingerprint=${doc.fingerprints?.[0]}`);
+ 
+    const pageCount =
+      scenario === "all" ? doc.numPages :
+      scenario === "few" ? Math.min(2, doc.numPages) : 0;
+ 
+    for (let i = 1; i <= pageCount; i++) {
+      await phase(`3-render-p${i}/${pageCount}`);
+      const page = await doc.getPage(i);
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      const px = canvas.width * canvas.height;
+      log(`  p${i} canvas=${canvas.width}x${canvas.height} ` +
+          `= ${(px * 4 / 1048576).toFixed(1)}MB`);
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      // 破棄せず保持する。保存フェーズと表示メモリのピークが重なる
+      // 実運用の条件を再現するため。
+      canvases.push(canvas);
+    }
+ 
+    await phase("4-annotation");
+    // 注記: annotationStorage に入れる値の形は PDF.js の版で変わる。
+    // 下記が通らない場合は例外を捨てて素の saveDocument を測る
+    // （その場合 changes が空なので、出力サイズの下限測定になる）。
+    try {
+      const page1 = await doc.getPage(1);
+      const vp = page1.getViewport({ scale: 1 });
+      doc.annotationStorage.setValue("pdfjs_internal_editor_probe", {
+        annotationType: 15, // AnnotationEditorType.INK
+        pageIndex: 0,
+        color: [255, 0, 0],
+        thickness: 3,
+        opacity: 1,
+        paths: [{
+          bezier: [20, 20, 40, 60, 80, 60, 100, 20],
+          points: [20, 20, 100, 20],
+        }],
+        outlines: null,
+        rect: [20, 20, 100, 60],
+        rotation: 0,
+        pageWidth: vp.width,
+        pageHeight: vp.height,
+      });
+      log(`  annotationStorage size=${doc.annotationStorage.size}`);
+    } catch (e) {
+      log(`  annotation 注入失敗 (${e.message}) — 素の saveDocument を測ります`);
+    }
+ 
+    await phase("5-saveDocument");
+    const t0 = performance.now();
+    const out = await doc.saveDocument();
+    const ms = Math.round(performance.now() - t0);
+    log(`  saveDocument bytes=${out.byteLength} ` +
+        `(${(out.byteLength / 1048576).toFixed(1)}MB) ` +
+        `delta=${out.byteLength - file.size}B elapsed=${ms}ms`);
+ 
+    await phase("6-blob");
+    const blob = new Blob([out], { type: "application/pdf" });
+    log(`  blob size=${blob.size}`);
+ 
+    await phase("7-settle");
+    log("完了。落ちなかった場合、Console.app に kill ログは出ません。");
+    log("Strict/Conservative の到達だけログに出ていれば、その到達フェーズを記録してください。");
+  } catch (e) {
+    log(`ERROR ${e.name}: ${e.message}`);
+    log("RangeError/Out of memory なら JS 側で捕捉できた例外です。");
+    log("画面が白くなって自動リロードされた場合は Jetsam による kill で、ここには何も残りません。");
+  } finally {
+    el("phase").textContent = "終了";
+    el("run").disabled = false;
+  }
+});
+</script>
+ 
